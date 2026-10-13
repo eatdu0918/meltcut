@@ -1,0 +1,74 @@
+{
+  "name": "@meltcut/shell",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron . --prod",
+    "e2e": "electron . --e2e",
+    "stage": "node scripts/stage.cjs",
+    "dist": "node scripts/dist.cjs",
+    "dist:dir": "node scripts/dist.cjs --dir"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "MeltCut",
+  "description": "A video editor with OpenCut's interface and the MLT rendering engine.",
+  "author": "eatdu0918",
+  "license": "MIT",
+  "build": {
+    "appId": "app.meltcut.desktop",
+    "productName": "MeltCut",
+    "electronVersion": "44.7.0",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!node_modules/**/*",
+      "!**/node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "staging/engine",
+        "to": "engine",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "../../THIRD-PARTY-NOTICES.md",
+        "to": "THIRD-PARTY-NOTICES.md"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "MeltCut-Setup-${version}.${ext}",
+      "shortcutName": "MeltCut"
+    },
+    "npmRebuild": false,
+    "afterPack": "scripts/after-pack.cjs"
+  }
+}

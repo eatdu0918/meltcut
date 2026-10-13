@@ -1,0 +1,144 @@
+{
+  "id": "d49088eb-c030-4d4f-a2b7-e1e87023f282",
+  "metadata": {
+    "id": "d49088eb-c030-4d4f-a2b7-e1e87023f282",
+    "name": "New project",
+    "duration": 1200000,
+    "createdAt": "2026-10-12T18:48:23.946Z",
+    "updatedAt": "2026-10-12T18:58:18.870Z"
+  },
+  "scenes": [
+    {
+      "id": "136d6704-e47c-4ff4-97ba-db8cf20e451f",
+      "name": "Main scene",
+      "isMain": true,
+      "tracks": {
+        "overlay": [
+          {
+            "id": "138fa3bf-4ce6-424d-b47b-7de905c314f3",
+            "name": "Text track",
+            "type": "text",
+            "elements": [
+              {
+                "type": "text",
+                "name": "Text",
+                "duration": 600000,
+                "startTime": 336000,
+                "trimStart": 0,
+                "trimEnd": 0,
+                "params": {
+                  "content": "Default text",
+                  "fontFamily": "Arial",
+                  "fontSize": 15,
+                  "color": "#ffffff",
+                  "textAlign": "center",
+                  "fontWeight": "normal",
+                  "fontStyle": "normal",
+                  "textDecoration": "none",
+                  "letterSpacing": 0,
+                  "lineHeight": 1.2,
+                  "background.enabled": false,
+                  "background.color": "#000000",
+                  "background.cornerRadius": 0,
+                  "background.paddingX": 30,
+                  "background.paddingY": 42,
+                  "background.offsetX": 0,
+                  "background.offsetY": 0,
+                  "transform.positionX": 0,
+                  "transform.positionY": 0,
+                  "transform.scaleX": 1,
+                  "transform.scaleY": 1,
+                  "transform.rotate": 0,
+                  "opacity": 1,
+                  "blendMode": "normal"
+                },
+                "id": "946ce7d9-62db-47d2-8dcb-893ee082f1ff"
+              }
+            ],
+            "hidden": false
+          },
+          {
+            "id": "bce149d2-da43-4e7c-8e21-a0593687e834",
+            "name": "Video track",
+            "type": "video",
+            "elements": [
+              {
+                "type": "video",
+                "mediaId": "29a2c091-5533-478d-9192-f5b473e6af31",
+                "name": "clipB.mp4 (left)",
+                "duration": 244000,
+                "startTime": 0,
+                "trimStart": 0,
+                "trimEnd": 476000,
+                "sourceDuration": 720000,
+                "isSourceAudioEnabled": true,
+                "hidden": false,
+                "params": {
+                  "transform.positionX": 0,
+                  "transform.positionY": 0,
+                  "transform.scaleX": 1,
+                  "transform.scaleY": 1,
+                  "transform.rotate": 0,
+                  "opacity": 1,
+                  "blendMode": "normal",
+                  "volume": 0,
+                  "muted": false
+                },
+                "id": "d6235176-62ea-4785-9b65-7d441cb3b9eb"
+              }
+            ],
+            "hidden": false,
+            "muted": false
+          }
+        ],
+        "main": {
+          "id": "3ab065c4-0feb-4c08-ad55-9a2e020475f6",
+          "name": "Main Track",
+          "type": "video",
+          "elements": [
+            {
+              "type": "video",
+              "mediaId": "dc27e7c9-6bed-4417-bb5a-32962b96c0e6",
+              "name": "clipA.mp4",
+              "duration": 1200000,
+              "startTime": 0,
+              "trimStart": 0,
+              "trimEnd": 0,
+              "sourceDuration": 1200000,
+              "isSourceAudioEnabled": true,
+              "hidden": false,
+              "params": {
+                "transform.positionX": 0,
+                "transform.positionY": 0,
+                "transform.scaleX": 1,
+                "transform.scaleY": 1,
+                "transform.rotate": 0,
+                "opacity": 1,
+                "blendMode": "normal",
+                "volume": 0,
+                "muted": false
+              },
+              "id": "c1021cb4-1ce6-48d6-9255-4308f3dfe8da"
+            }
+          ],
+          "muted": false,
+          "hidden": false
+        },
+        "audio": []
+      },
+      "bookmarks": [],
+      "createdAt": "2026-10-12T18:48:23.946Z",
+      "updatedAt": "2026-10-12T18:58:18.062Z"
+    }
+  ],
+  "currentSceneId": "136d6704-e47c-4ff4-97ba-db8cf20e451f",
+  "settings": {
+    "fps": { "numerator": 30, "denominator": 1 },
+    "canvasSize": { "width": 1280, "height": 720 },
+    "canvasSizeMode": "preset",
+    "lastCustomCanvasSize": null,
+    "originalCanvasSize": { "width": 1280, "height": 720 },
+    "background": { "type": "color", "color": "#000000" }
+  },
+  "version": 31
+}
