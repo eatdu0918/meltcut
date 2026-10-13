@@ -65,9 +65,8 @@ jobs:
           if (-not (Test-Path (Join-Path $bin "melt.exe"))) { throw "melt.exe not found in $bin" }
           "MLT_BIN_DIR=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Converter tests
-        working-directory: apps/web
-        run: bun test src/mlt
+      - name: Tests
+        run: bun test
 
       - name: Build the web app
         working-directory: apps/web

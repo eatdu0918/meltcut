@@ -563,20 +563,21 @@ describe("resolveTrackPlacement", () => {
 					id: "audio-1",
 					type: "audio",
 					elements: [
-						buildElement({ id: "a", type: "audio", startTime: 0, duration: 2 }),
-						buildElement({ id: "b", type: "audio", startTime: 5, duration: 2 }),
+						buildElement({ id: "a", type: "audio", startTime: 0, duration: 4 }),
+						buildElement({ id: "b", type: "audio", startTime: 10, duration: 4 }),
 					],
 				}),
 			],
 		});
 
+		// Times are whole ticks. The first span fits in the gap, the second overlaps "b".
 		expect(
 			resolveTrackPlacement({
 				tracks,
 				elementType: "audio",
 				timeSpans: [
-					buildTimeSpan({ startTime: 2.5, duration: 1 }),
-					buildTimeSpan({ startTime: 5.5, duration: 1 }),
+					buildTimeSpan({ startTime: 5, duration: 2 }),
+					buildTimeSpan({ startTime: 11, duration: 2 }),
 				],
 				strategy: { type: "firstAvailable" },
 			}),

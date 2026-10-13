@@ -1061,7 +1061,7 @@ function EffectsButton({
 	const editor = useEditor();
 	const setActiveTab = usePropertiesStore((s) => s.setActiveTab);
 
-	const handleClick = (event: React.MouseEvent) => {
+	const handleClick = (event: React.MouseEvent | React.KeyboardEvent) => {
 		event.stopPropagation();
 		editor.selection.setSelectedElements({
 			elements: [{ trackId: track.id, elementId: element.id }],
@@ -1069,15 +1069,21 @@ function EffectsButton({
 		setActiveTab({ elementType: element.type, tabId: "effects" });
 	};
 
+	// The clip itself is a <button>, and HTML does not allow one inside another.
 	return (
-		<button
-			type="button"
+		<span
+			role="button"
+			tabIndex={-1}
+			aria-label="Show effects"
 			className="flex shrink-0 justify-center text-white cursor-pointer"
 			onMouseDown={(event) => event.stopPropagation()}
 			onClick={handleClick}
+			onKeyDown={(event) => {
+				if (event.key === "Enter" || event.key === " ") handleClick(event);
+			}}
 		>
 			<HugeiconsIcon icon={MagicWand05Icon} size={12} />
-		</button>
+		</span>
 	);
 }
 
