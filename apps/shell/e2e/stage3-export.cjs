@@ -1,7 +1,7 @@
 // Stage 3: a timeline built in the editor exports through the MLT engine, from the real export panel.
 const fs = require("node:fs");
 const path = require("node:path");
-const { OUT_DIR, TEST_MEDIA_DIR, buildTimeline, clickByText, createProject, importMedia, assert } = require("./helpers.cjs");
+const { OUT_DIR, TEST_MEDIA_DIR, buildTimeline, clickByText, createProject, importMedia, readStore, assert } = require("./helpers.cjs");
 const { probe, frameAt, maxVolumeDb, near } = require("./media-checks.cjs");
 
 const GREY = [191, 191, 191]; // clipB (SMPTE bars) at 100,100
@@ -93,6 +93,13 @@ module.exports = async (ctx) => {
 	console.log("  ok non-ASCII paths");
 
 	// --- Media whose original file is gone falls back to a cached copy ---
+	// The editor copies an import into its own storage in the background; the copy is the
+	// fallback, so wait for it before taking the original away.
+	const projectId = await ctx.exec(`return location.pathname.split("/").pop()`);
+	await ctx.waitFor(
+		`(async () => { ${readStore(`video-editor-media-${projectId}`, "media-metadata")} })().then((rows) => rows.length === 3).catch(() => false)`,
+		{ label: "imported clip stored" },
+	);
 	fs.rmSync(unicodeClip);
 	const fallbackOut = path.join(OUT_DIR, "stage3-fallback.mp4");
 	fs.rmSync(fallbackOut, { force: true });
