@@ -45,6 +45,7 @@ beforeAll(() => {
 	// Left half black, right half white.
 	still({ name: "edge", filter: "color=c=black:s=1280x720:d=1,drawbox=x=640:y=0:w=640:h=720:color=white:t=fill" });
 	// Dark grey next to light grey: room for sharpening to overshoot on both sides.
+	still({ name: "dullred", filter: "color=c=0x905050:s=1280x720:d=1" });
 	still({ name: "softedge", filter: "color=c=0x606060:s=1280x720:d=1,drawbox=x=640:y=0:w=640:h=720:color=0xa0a0a0:t=fill" });
 	// A smooth horizontal grey ramp. Computed per pixel: ffmpeg's `gradients` source picks
 	// a random seed, which made this picture differ from run to run.
@@ -254,4 +255,45 @@ describe.skipIf(!binDir)("MLT effect catalog rendered by melt", () => {
 			expect(difference).toBeGreaterThan(40);
 		}
 	}, 60_000);
+
+	test("the second batch of effects each change the picture", () => {
+		// How far two renders of the same source are apart, sampled on a grid.
+		const distance = (a: (x: number, y: number) => Pixel, b: (x: number, y: number) => Pixel) => {
+			let total = 0;
+			let count = 0;
+			for (let y = 20; y < 700; y += 20) {
+				for (let x = 20; x < 1260; x += 20) {
+					const [p, q] = [a(x, y), b(x, y)];
+					total += Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) + Math.abs(p[2] - q[2]);
+					count += 3;
+				}
+			}
+			return total / count;
+		};
+		const cases: [string, string, Record<string, unknown>][] = [
+			["mlt.vibrance", "dullred", { amount: 200 }],
+			["mlt.tint", "grey", { hue: 30, saturation: 60, amount: 100 }],
+			["mlt.edges", "softedge", { threshold: 30 }],
+			["mlt.rgbsplit", "softedge", { amount: 40 }],
+			["mlt.motionblur", "softedge", { angle: 0, length: 80 }],
+			["mlt.wave", "softedge", { amount: 40, speed: 5 }],
+			["mlt.lens", "softedge", { amount: 80 }],
+		];
+		for (const [effect, mediaId, params] of cases) {
+			const changed = distance(render({ mediaId }), render({ mediaId, effect, params }));
+			expect(`${effect} ${changed > 1}`).toBe(`${effect} true`);
+		}
+		// Denoise must leave a clean picture practically alone.
+		expect(distance(render({ mediaId: "softedge" }), render({ mediaId: "softedge", effect: "mlt.denoise", params: { strength: 6 } }))).toBeLessThan(3);
+	}, 120_000);
+
+	test("tint colours a grey picture and RGB split pulls the channels apart", () => {
+		const tinted = centre(render({ mediaId: "grey", effect: "mlt.tint", params: { hue: 0, saturation: 100, amount: 100 } }));
+		expect(tinted[0]).toBeGreaterThan(tinted[1] + 40);
+		expect(tinted[0]).toBeGreaterThan(tinted[2] + 40);
+		// At the edge between the two greys, red is taken from the right and blue from the left.
+		const split = render({ mediaId: "softedge", effect: "mlt.rgbsplit", params: { amount: 60 } });
+		const atEdge = split(630, 360);
+		expect(atEdge[0]).toBeGreaterThan(atEdge[2] + 30);
+	});
 });

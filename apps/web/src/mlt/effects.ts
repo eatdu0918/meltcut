@@ -341,6 +341,147 @@ export const MLT_EFFECTS: MltEffectDefinition[] = [
 			},
 		],
 	},
+	{
+		type: "mlt.vibrance",
+		name: "Vibrance",
+		keywords: ["vibrance", "saturation", "vivid", "color", "pop"],
+		params: [
+			slider({ key: "amount", label: "Amount", min: -100, max: 200, defaultValue: 100, keyframable: true }),
+		],
+		filters: (read) => [
+			{ service: "avfilter.vibrance", props: { "av.intensity": read.number("amount", percent) } },
+		],
+	},
+	{
+		type: "mlt.tint",
+		name: "Tint",
+		keywords: ["tint", "colorize", "duotone", "wash", "color"],
+		params: [
+			slider({ key: "hue", label: "Hue", min: 0, max: 360, defaultValue: 30 }),
+			slider({ key: "saturation", label: "Saturation", min: 0, max: 100, defaultValue: 60 }),
+			slider({ key: "amount", label: "Amount", min: 0, max: 100, defaultValue: 100, keyframable: true }),
+		],
+		filters: (read) => [
+			{
+				service: "avfilter.colorize",
+				props: {
+					"av.hue": read.number("hue"),
+					"av.saturation": read.number("saturation", percent),
+					"av.lightness": 0.5,
+					"av.mix": read.number("amount", percent),
+				},
+			},
+		],
+	},
+	{
+		type: "mlt.denoise",
+		name: "Denoise",
+		keywords: ["denoise", "noise", "clean", "smooth", "grain"],
+		params: [
+			slider({ key: "strength", label: "Strength", min: 0, max: 30, defaultValue: 6 }),
+		],
+		filters: (read) => [
+			{
+				service: "avfilter.hqdn3d",
+				props: {
+					"av.luma_spatial": read.number("strength"),
+					"av.chroma_spatial": read.number("strength", (value) => value * 0.75),
+				},
+			},
+		],
+	},
+	{
+		type: "mlt.edges",
+		name: "Edges",
+		keywords: ["edges", "outline", "sketch", "line art", "detect"],
+		params: [
+			slider({ key: "threshold", label: "Threshold", min: 1, max: 100, defaultValue: 30 }),
+		],
+		filters: (read) => [
+			{
+				service: "avfilter.edgedetect",
+				props: {
+					"av.high": read.number("threshold", percent),
+					"av.low": read.number("threshold", (value) => value / 250),
+				},
+			},
+		],
+	},
+	{
+		type: "mlt.rgbsplit",
+		name: "RGB split",
+		keywords: ["rgb", "split", "chromatic", "aberration", "glitch", "shift"],
+		params: [
+			slider({ key: "amount", label: "Amount", min: 0, max: 100, defaultValue: 12 }),
+		],
+		filters: (read, { width }) => {
+			// Whole pixels, with the amount given in 1080p pixels. Not animated.
+			const shift = read.combine((get) => String(Math.round(get("amount") * (width / 1920))));
+			return [
+				{
+					service: "avfilter.rgbashift",
+					props: { "av.rh": `-${shift}`, "av.bh": shift, "av.edge": "smear" },
+				},
+			];
+		},
+	},
+	{
+		type: "mlt.motionblur",
+		name: "Directional blur",
+		keywords: ["motion", "blur", "directional", "speed", "streak"],
+		params: [
+			slider({ key: "angle", label: "Angle", min: 0, max: 360, defaultValue: 0 }),
+			slider({ key: "length", label: "Length", min: 0, max: 200, defaultValue: 30 }),
+		],
+		filters: (read, { width }) => [
+			{
+				service: "avfilter.dblur",
+				props: {
+					"av.angle": read.number("angle"),
+					// The length is given in 1080p pixels.
+					"av.radius": read.combine((get) => String(Math.max(1, get("length") * (width / 1920)))),
+				},
+			},
+		],
+	},
+	{
+		type: "mlt.wave",
+		name: "Wave",
+		keywords: ["wave", "wobble", "water", "ripple", "distort"],
+		params: [
+			slider({ key: "amount", label: "Amount", min: 1, max: 100, defaultValue: 10 }),
+			slider({ key: "speed", label: "Speed", min: 0, max: 100, defaultValue: 5 }),
+		],
+		filters: (read) => [
+			{
+				service: "wave",
+				props: {
+					wave: read.number("amount"),
+					speed: read.number("speed"),
+					deformX: 1,
+					deformY: 1,
+				},
+			},
+		],
+	},
+	{
+		type: "mlt.lens",
+		name: "Lens distortion",
+		keywords: ["lens", "fisheye", "barrel", "pincushion", "distort", "gopro"],
+		params: [
+			slider({ key: "amount", label: "Amount", min: -100, max: 100, defaultValue: 40 }),
+		],
+		filters: (read) => [
+			{
+				service: "avfilter.lenscorrection",
+				props: {
+					// Positive bulges the picture outwards (fisheye), negative pinches it.
+					"av.k1": read.number("amount", (value) => value / 200),
+					"av.k2": read.number("amount", (value) => value / 400),
+				},
+			},
+		],
+	},
 ];
 
 const byType = new Map(MLT_EFFECTS.map((effect) => [effect.type, effect]));
