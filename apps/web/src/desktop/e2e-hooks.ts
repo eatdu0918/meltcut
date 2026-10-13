@@ -12,8 +12,10 @@ import { buildScene } from "@/services/renderer/scene-builder";
 import {
 	buildElementFromMedia,
 	buildGraphicElement,
+	buildStickerElement,
 	buildTextElement,
 } from "@/timeline/element-utils";
+import { resolveStickerIntrinsicSize } from "@/stickers";
 import { MLT_TICKS_PER_SECOND } from "@/mlt/convert";
 import { buildDefaultMaskInstance } from "@/masks";
 import { mediaTimeFromSeconds } from "@/wasm";
@@ -33,6 +35,8 @@ export function installE2EHooks(): void {
 		buildElementFromMedia,
 		buildTextElement,
 		buildGraphicElement,
+		buildStickerElement,
+		resolveStickerIntrinsicSize,
 		buildDefaultMaskInstance,
 		mediaTimeFromSeconds,
 		/**

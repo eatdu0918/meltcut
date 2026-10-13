@@ -117,6 +117,30 @@ const cases = [
 			editor.timeline.addClipEffect({ trackId, elementId, effectType: "blur" });
 		`,
 	},
+	{
+		name: "sticker-flag",
+		at: 1,
+		run: `
+			const { buildStickerElement, resolveStickerIntrinsicSize } = window.__e2e;
+			const size = await resolveStickerIntrinsicSize({ stickerId: "flags:KR" });
+			editor.timeline.insertElement({ element: { ...buildStickerElement({ stickerId: "flags:KR", name: "Flag", startTime: t(0), intrinsicWidth: size.width, intrinsicHeight: size.height }), params: { ...buildStickerElement({ stickerId: "flags:KR", startTime: t(0) }).params, "transform.positionX": -350, "transform.positionY": -200, "transform.rotate": 15 } }, placement: { mode: "auto" } });
+		`,
+	},
+	{
+		name: "sticker-keyframed",
+		at: 1.5,
+		run: `
+			const { trackId, elementId } = find("Flag");
+			editor.timeline.upsertKeyframes({ keyframes: [
+				{ trackId, elementId, propertyPath: "transform.positionY", time: t(0), value: -250 },
+				{ trackId, elementId, propertyPath: "transform.positionY", time: t(3), value: 250 },
+				{ trackId, elementId, propertyPath: "transform.scaleX", time: t(0), value: 0.5 },
+				{ trackId, elementId, propertyPath: "transform.scaleX", time: t(3), value: 1.5 },
+				{ trackId, elementId, propertyPath: "transform.scaleY", time: t(0), value: 0.5 },
+				{ trackId, elementId, propertyPath: "transform.scaleY", time: t(3), value: 1.5 },
+			] });
+		`,
+	},
 ];
 
 module.exports = async (ctx) => {
