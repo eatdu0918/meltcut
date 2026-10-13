@@ -11,6 +11,7 @@ import {
 	clipTransitionFrames,
 	NO_MODIFIERS,
 	readTransitions,
+	transitionFrameCounts,
 } from "./transitions";
 
 /**
@@ -80,6 +81,11 @@ export interface MltRasterSource {
 	path: string;
 	/** True when position, scale, rotation and opacity are already in the image. */
 	bakedTransform: boolean;
+	/**
+	 * True when `path` is a numbered pattern ("name-%05d.png") holding one picture per frame,
+	 * for elements whose look is keyframed.
+	 */
+	sequence?: boolean;
 }
 
 export interface MltConversionResult {
@@ -564,6 +570,8 @@ export function convertToMlt({
 		) {
 			warnings.push(`${where}: masks are not converted yet`);
 		}
+		// A picture sequence already contains every keyframed look of the element.
+		if (rasters?.get(element.id)?.sequence) return;
 		const convertedPaths: string[] = [...TRANSFORM_PATHS, "volume"];
 		const otherAnimated = Object.keys(element.animations ?? {}).filter(
 			(path) =>
@@ -581,11 +589,17 @@ export function convertToMlt({
 		id,
 		inFrame,
 		outFrame,
+		hold,
 	}: {
 		element: Extract<TimelineElement, { type: "video" | "image" | "audio" }>;
 		id: string;
 		inFrame: number;
 		outFrame: number;
+		/**
+		 * Makes a silent still of the clip's first or last frame, `frames` long, to sit under
+		 * a neighbour's transition. The entry must then play the clip's first or last `frames`.
+		 */
+		hold?: { side: "first" | "last"; frames: number };
 	}): string | null => {
 		const isLibraryAudio =
 			element.type === "audio" && element.sourceType === "library";
@@ -632,6 +646,7 @@ export function convertToMlt({
 
 		if (element.type !== "image") {
 			const silenced =
+				hold !== undefined ||
 				element.params.muted === true ||
 				(element.type === "video" && element.isSourceAudioEnabled === false);
 			if (silenced) {
@@ -715,6 +730,19 @@ export function convertToMlt({
 				range,
 			});
 			if (transform) lines.push(transform);
+			if (hold) {
+				// Attached last, so the held frame carries every filter above as it looked at
+				// that instant. `frame` counts from the start of the playlist entry.
+				lines.push(
+					filter({
+						service: "freeze",
+						props: [
+							prop("frame", hold.side === "last" ? hold.frames - 1 : 0),
+							prop(hold.side === "last" ? "freeze_before" : "freeze_after", 1),
+						],
+					}),
+				);
+			}
 		}
 
 		// No in/out here: the playlist entry carries the trim. Setting both applies it twice.
@@ -737,6 +765,7 @@ export function convertToMlt({
 			prop("length", outFrame + 1),
 			prop("ttl", 1),
 		];
+		if (raster.sequence) lines.push(prop("begin", 0), prop("loop", 0));
 		lines.push(
 			...effectFilters({
 				element,
@@ -960,6 +989,110 @@ export function convertToMlt({
 			}
 			if (!byBlend.has(mode)) byBlend.set(mode, []);
 			byBlend.get(mode)?.push(element);
+		}
+
+		/**
+		 * Transitions at a cut. Where a clip with a transition touches its neighbour on this
+		 * track, the neighbour's nearest frame is held on a track underneath for as long as
+		 * the transition runs, so the clip appears over (or gives way to) the other clip
+		 * instead of the tracks below.
+		 */
+		if (track.type !== "audio") {
+			type MediaClip = Extract<TimelineElement, { type: "video" | "image" }>;
+			const clips = track.elements
+				.filter(
+					(element): element is MediaClip =>
+						(element.type === "video" || element.type === "image") &&
+						!element.hidden &&
+						media.has(element.mediaId),
+				)
+				.map((element) => {
+					const start = toFrames(element.startTime);
+					const length = toFrames(element.startTime + element.duration) - start;
+					const rate =
+						element.type === "video" && element.retime ? element.retime.rate : 1;
+					const inFrame =
+						element.type === "image" ? 0 : toFrames(element.trimStart / rate);
+					return { element, start, length, inFrame };
+				})
+				.filter((clip) => clip.length > 0)
+				.sort((a, b) => a.start - b.start);
+
+			const holds: { start: number; length: number; entry: string }[] = [];
+			const addHold = ({
+				of,
+				side,
+				start,
+				frames,
+			}: {
+				of: (typeof clips)[number];
+				side: "first" | "last";
+				start: number;
+				frames: number;
+			}) => {
+				const length = Math.min(frames, of.length);
+				if (length <= 0) return;
+				const id = `hold${producers.length}`;
+				const entryIn =
+					side === "last" ? of.inFrame + of.length - length : of.inFrame;
+				const producer = buildMediaProducer({
+					element: of.element,
+					id,
+					inFrame: of.inFrame,
+					outFrame: of.inFrame + of.length - 1,
+					hold: { side, frames: length },
+				});
+				if (!producer) return;
+				producers.push(producer);
+				holds.push({
+					start,
+					length,
+					entry: `<entry producer="${id}" in="${entryIn}" out="${entryIn + length - 1}"/>`,
+				});
+			};
+			clips.forEach((clip, index) => {
+				const counts = transitionFrameCounts({
+					params: clip.element.params,
+					length: clip.length,
+					framesPerSecond: fps.numerator / fps.denominator,
+				});
+				const previous = clips[index - 1];
+				const next = clips[index + 1];
+				if (
+					counts.in > 0 &&
+					previous &&
+					previous.start + previous.length === clip.start
+				) {
+					addHold({ of: previous, side: "last", start: clip.start, frames: counts.in });
+				}
+				if (counts.out > 0 && next && next.start === clip.start + clip.length) {
+					addHold({
+						of: next,
+						side: "first",
+						start: clip.start + clip.length - counts.out,
+						frames: counts.out,
+					});
+				}
+			});
+			if (holds.length > 0) {
+				const entries: string[] = [];
+				let cursor = 0;
+				for (const hold of holds.sort((a, b) => a.start - b.start)) {
+					if (hold.start < cursor) continue;
+					if (hold.start > cursor) {
+						entries.push(`<blank length="${hold.start - cursor}"/>`);
+					}
+					entries.push(hold.entry);
+					cursor = hold.start + hold.length;
+				}
+				const id = `holds${playlistCount++}`;
+				playlists.push({
+					id,
+					xml: `<playlist id="${id}">\n    ${entries.join("\n    ")}\n  </playlist>`,
+					hide: "hidden" in track && track.hidden ? 3 : 2,
+					blend: "normal",
+				});
+			}
 		}
 
 		for (const [blend, blendElements] of byBlend) {

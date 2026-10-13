@@ -118,6 +118,31 @@ const cases = [
 		`,
 	},
 	{
+		name: "text-keyframed-colour",
+		at: 1.5,
+		run: `
+			editor.timeline.insertElement({ element: buildTextElement({ raw: { name: "Fading", params: { content: "Colour", fontSize: 10, "background.enabled": true, "background.color": "#000000", "transform.positionY": -260 } }, startTime: t(0) }), placement: { mode: "auto" } });
+			const { trackId, elementId } = find("Fading");
+			editor.timeline.upsertKeyframes({ keyframes: [
+				{ trackId, elementId, propertyPath: "color", time: t(0), value: "#ff0000" },
+				{ trackId, elementId, propertyPath: "color", time: t(3), value: "#0000ff" },
+				{ trackId, elementId, propertyPath: "background.color", time: t(0), value: "#ffffff" },
+				{ trackId, elementId, propertyPath: "background.color", time: t(3), value: "#00ff00" },
+			] });
+		`,
+	},
+	{
+		name: "text-keyframed-colour-and-position",
+		at: 2.5,
+		run: `
+			const { trackId, elementId } = find("Fading");
+			editor.timeline.upsertKeyframes({ keyframes: [
+				{ trackId, elementId, propertyPath: "transform.positionX", time: t(0), value: -400 },
+				{ trackId, elementId, propertyPath: "transform.positionX", time: t(3), value: 400 },
+			] });
+		`,
+	},
+	{
 		name: "sticker-flag",
 		at: 1,
 		run: `

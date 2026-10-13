@@ -4,9 +4,10 @@ import type { ParamValues } from "@/params";
  * Transitions rendered by the MLT engine. A transition belongs to one clip: it plays as
  * the clip appears ("in") or disappears ("out") and reveals whatever is underneath.
  *
- * For a cross-dissolve between two clips, overlap them on two tracks and fade the upper
- * one. The editor's timeline has no shared cut between clips to attach a transition to,
- * and this needs no spare footage beyond the clip's own length.
+ * At a cut, where the clip touches its neighbour on the same track, the neighbour's nearest
+ * frame is held underneath for the length of the transition. A fade then reads as a
+ * dissolve between the two clips, a slide or wipe as one clip moving over the other, and
+ * no spare footage beyond the clips' own length is needed.
  *
  * Stored in the clip's `params`, so it is saved, copied and undone like any other value.
  */
@@ -148,9 +149,28 @@ function combine(a: TransitionModifiers, b: TransitionModifiers): TransitionModi
 }
 
 /**
- * Modifiers for every frame of a clip, or null when it has no transitions. Each transition
- * is limited to half the clip so "in" and "out" never overlap.
+ * How many frames a clip's "in" and "out" transitions last (0 when it has none). Each is
+ * limited to half the clip so they never overlap.
  */
+export function transitionFrameCounts({
+	params,
+	length,
+	framesPerSecond,
+}: {
+	params: ParamValues;
+	length: number;
+	framesPerSecond: number;
+}): { in: number; out: number } {
+	const transitions = readTransitions({ params });
+	const limit = Math.max(1, Math.floor(length / 2));
+	const framesOf = (transition: ClipTransition | null) =>
+		transition
+			? Math.min(limit, Math.max(1, Math.round(transition.seconds * framesPerSecond)))
+			: 0;
+	return { in: framesOf(transitions.in), out: framesOf(transitions.out) };
+}
+
+/** Modifiers for every frame of a clip, or null when it has no transitions. */
 export function clipTransitionFrames({
 	params,
 	length,
@@ -162,13 +182,11 @@ export function clipTransitionFrames({
 }): ((frame: number) => TransitionModifiers) | null {
 	const transitions = readTransitions({ params });
 	if (!transitions.in && !transitions.out) return null;
-	const limit = Math.max(1, Math.floor(length / 2));
-	const framesOf = (transition: ClipTransition | null) =>
-		transition
-			? Math.min(limit, Math.max(1, Math.round(transition.seconds * framesPerSecond)))
-			: 0;
-	const inFrames = framesOf(transitions.in);
-	const outFrames = framesOf(transitions.out);
+	const { in: inFrames, out: outFrames } = transitionFrameCounts({
+		params,
+		length,
+		framesPerSecond,
+	});
 
 	return (frame) => {
 		let modifiers = NO_MODIFIERS;

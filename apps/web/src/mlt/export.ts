@@ -7,10 +7,12 @@ import type { TimelineTrack } from "@/timeline/types";
 import {
 	convertToMlt,
 	libraryMediaKey,
+	MLT_TICKS_PER_SECOND,
 	type MltMediaSource,
 	type MltRasterSource,
 } from "./convert";
 import {
+	changesOverTime,
 	needsLiveTransform,
 	isPlainColour,
 	isRasterizable,
@@ -207,23 +209,53 @@ async function resolveRasters({
 		for (const element of track.elements) {
 			if (!isRasterizable(element)) continue;
 			const bakeTransform = !needsLiveTransform({ element });
-			const key = rasterKey({ element, bakeTransform, outputSize });
+			// An element whose look is keyframed is drawn once per frame, as a numbered sequence.
+			const ticksPerFrame = (MLT_TICKS_PER_SECOND * fps.denominator) / fps.numerator;
+			const frameCount = changesOverTime({ element })
+				? Math.round((element.startTime + element.duration) / ticksPerFrame) -
+					Math.round(element.startTime / ticksPerFrame)
+				: 0;
+			const isSequence = frameCount > 1;
+			const key = rasterKey({
+				element,
+				bakeTransform,
+				outputSize,
+				frames: isSequence ? { count: frameCount, ticksPerFrame } : undefined,
+			});
 			let path = rasterPaths.get(key);
-			if (!path || !(await bridge.fileExists(path))) {
+			if (!path || !(await bridge.fileExists(path.replace("%05d", "00000")))) {
 				try {
-					const image = await rasterizeElement({
-						element,
-						bakeTransform,
-						canvasSize,
-						outputSize,
-						fps,
-						mediaAssets: editor.media.getAssets(),
-					});
-					path = await bridge.cacheMedia({
-						id: `raster-${key}`,
-						extension: ".png",
-						data: await image.arrayBuffer(),
-					});
+					const draw = (time: number) =>
+						rasterizeElement({
+							element,
+							bakeTransform,
+							canvasSize,
+							outputSize,
+							fps,
+							mediaAssets: editor.media.getAssets(),
+							time,
+						});
+					if (isSequence) {
+						let first = "";
+						for (let frame = 0; frame < frameCount; frame++) {
+							const image = await draw(Math.round(frame * ticksPerFrame));
+							const written = await bridge.cacheMedia({
+								id: `raster-${key}-${String(frame).padStart(5, "0")}`,
+								extension: ".png",
+								data: await image.arrayBuffer(),
+							});
+							if (frame === 0) first = written;
+						}
+						// melt reads "name-%05d.png" as one picture per frame.
+						path = first.replace(/-00000\.png$/, "-%05d.png");
+					} else {
+						const image = await draw(0);
+						path = await bridge.cacheMedia({
+							id: `raster-${key}`,
+							extension: ".png",
+							data: await image.arrayBuffer(),
+						});
+					}
 					rasterPaths.set(key, path);
 				} catch (error) {
 					warnings.push(
@@ -231,6 +263,10 @@ async function resolveRasters({
 					);
 					continue;
 				}
+			}
+			if (isSequence) {
+				rasters.set(element.id, { path, bakedTransform: bakeTransform, sequence: true });
+				continue;
 			}
 			rasters.set(element.id, { path, bakedTransform: bakeTransform });
 		}

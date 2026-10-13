@@ -46,8 +46,9 @@ beforeAll(() => {
 	still({ name: "edge", filter: "color=c=black:s=1280x720:d=1,drawbox=x=640:y=0:w=640:h=720:color=white:t=fill" });
 	// Dark grey next to light grey: room for sharpening to overshoot on both sides.
 	still({ name: "softedge", filter: "color=c=0x606060:s=1280x720:d=1,drawbox=x=640:y=0:w=640:h=720:color=0xa0a0a0:t=fill" });
-	// A smooth horizontal grey ramp.
-	still({ name: "gradient", filter: "gradients=s=1280x720:c0=black:c1=white:x0=0:y0=0:x1=1280:y1=0:d=1" });
+	// A smooth horizontal grey ramp. Computed per pixel: ffmpeg's `gradients` source picks
+	// a random seed, which made this picture differ from run to run.
+	still({ name: "gradient", filter: "color=c=black:s=1280x720:d=1,format=rgb24,geq=r='X*255/1279':g='X*255/1279':b='X*255/1279'" });
 });
 
 let counter = 0;

@@ -193,8 +193,9 @@ export function TransitionsView() {
 					}
 				/>
 				<Note>
-					Turn on MLT in the preview toolbar to see transitions. For a cross-dissolve,
-					overlap two clips on separate tracks and fade the upper one.
+					Turn on MLT in the preview toolbar to see transitions. Where two clips touch on
+					the same track, the transition plays between them: a fade becomes a dissolve from
+					one clip to the other.
 				</Note>
 			</div>
 		</PanelView>

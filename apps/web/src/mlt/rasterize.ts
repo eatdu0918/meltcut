@@ -12,6 +12,7 @@ import type {
 	TimelineElement,
 } from "@/timeline/types";
 import { ZERO_MEDIA_TIME } from "@/wasm";
+import { isMltEffectType } from "./effects";
 import { readTransitions } from "./transitions";
 
 /**
@@ -66,6 +67,28 @@ export function needsLiveTransform({
 }
 
 /**
+ * True when the element's own look changes over time (colour, text background, shape
+ * parameters, one of the editor's effects), so one picture cannot stand for the whole clip.
+ * Transform keyframes are animated by MLT, and MLT effects are MLT filters; neither counts.
+ */
+export function changesOverTime({
+	element,
+}: {
+	element: RasterizableElement;
+}): boolean {
+	const mltEffectIds = new Set(
+		("effects" in element ? (element.effects ?? []) : [])
+			.filter((effect) => isMltEffectType(effect.type))
+			.map((effect) => effect.id),
+	);
+	return Object.entries(element.animations ?? {}).some(([path, channel]) => {
+		if (!channel || TRANSFORM_PATHS.includes(path)) return false;
+		const effectId = /^effects\.([^.]+)\./.exec(path)?.[1];
+		return !(effectId && mltEffectIds.has(effectId));
+	});
+}
+
+/**
  * A copy of the element as it should be drawn into the image.
  *
  * With `bakeTransform` the image already contains position, scale, rotation and opacity,
@@ -109,6 +132,7 @@ export async function rasterizeElement({
 	outputSize,
 	fps,
 	mediaAssets,
+	time = 0,
 }: {
 	element: RasterizableElement;
 	bakeTransform: boolean;
@@ -116,6 +140,8 @@ export async function rasterizeElement({
 	outputSize: { width: number; height: number };
 	fps: FrameRate;
 	mediaAssets: MediaAsset[];
+	/** Ticks after the element's start; only matters for elements that change over time. */
+	time?: number;
 }): Promise<Blob> {
 	const prepared = prepareElement({ element, bakeTransform });
 	const tracks = {
@@ -158,7 +184,7 @@ export async function rasterizeElement({
 		const canvas = document.createElement("canvas");
 		canvas.width = outputSize.width;
 		canvas.height = outputSize.height;
-		await renderer.renderToCanvas({ node: scene, time: 0, targetCanvas: canvas });
+		await renderer.renderToCanvas({ node: scene, time, targetCanvas: canvas });
 		const context = canvas.getContext("2d");
 		if (!context) throw new Error("No 2D context for rasterising");
 		return context.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -260,16 +286,19 @@ export function rasterKey({
 	element,
 	bakeTransform,
 	outputSize,
+	frames,
 }: {
 	element: RasterizableElement;
 	bakeTransform: boolean;
 	outputSize: { width: number; height: number };
+	/** For a picture sequence: how many frames and at what rate. */
+	frames?: { count: number; ticksPerFrame: number };
 }): string {
 	const prepared = prepareElement({ element, bakeTransform });
 	// Where and how long the element sits on the timeline does not change its picture.
 	const { id: _id, name: _name, startTime: _start, duration: _duration, trimEnd: _trimEnd, ...visual } =
 		prepared as RasterizableElement & { trimEnd?: unknown };
-	const text = JSON.stringify([visual, outputSize]);
+	const text = JSON.stringify([visual, outputSize, frames ?? null]);
 	// FNV-1a, twice with different seeds: plenty for a cache key.
 	const hash = (seed: number) => {
 		let h = seed;

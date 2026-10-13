@@ -41,7 +41,63 @@ beforeAll(() => {
 	const tone = join(work, "tone.mp4");
 	execFileSync(ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=4", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", tone]);
 	media.set("tone", { path: tone, width: 320, height: 180 });
+	const blue = join(work, "blue.png");
+	execFileSync(ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=1280x720:d=1", "-frames:v", "1", blue]);
+	media.set("blue", { path: blue, width: 1280, height: 720 });
+	// Grey level encodes the frame number: Y = 16 + N, so RGB grey = N * 255 / 219.
+	const ramp = join(work, "ramp.mp4");
+	execFileSync(ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "nullsrc=s=320x180:r=30:d=4,geq=lum='16+N':cb=128:cr=128", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv", "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p", ramp]);
+	media.set("ramp", { path: ramp, width: 320, height: 180 });
 });
+
+const BASE_PARAMS = {
+	"transform.positionX": 0,
+	"transform.positionY": 0,
+	"transform.scaleX": 1,
+	"transform.scaleY": 1,
+	"transform.rotate": 0,
+	opacity: 1,
+	blendMode: "normal",
+	volume: 0,
+	muted: false,
+};
+
+/** Clips placed one after another on the main track, each two seconds long. */
+function cut(
+	clips: { mediaId: string; type?: "image" | "video"; params?: Record<string, unknown> }[],
+) {
+	const elements = clips.map(({ mediaId, type = "image", params = {} }, index) => ({
+		id: `el${++counter}`,
+		type,
+		mediaId,
+		name: mediaId,
+		startTime: seconds(index * 2),
+		duration: seconds(2),
+		trimStart: 0,
+		trimEnd: 0,
+		hidden: false,
+		isSourceAudioEnabled: true,
+		params: { ...BASE_PARAMS, ...params },
+	}));
+	const result = convertToMlt({
+		projectName: "cut-test",
+		settings: {
+			fps: { numerator: 30, denominator: 1 },
+			canvasSize: CANVAS,
+			background: { type: "color", color: "#ffffff" },
+		},
+		scene: {
+			tracks: {
+				main: { id: "main", name: "Main", type: "video", elements, muted: false, hidden: false },
+				overlay: [],
+				audio: [],
+			},
+		} as unknown as MltConversionInput["scene"],
+		media,
+	});
+	expect(result.warnings).toEqual([]);
+	return result.xml;
+}
 
 let counter = 0;
 function project({
@@ -240,5 +296,72 @@ describe.skipIf(!binDir)("transitions rendered by melt", () => {
 		expect(full - start).toBeGreaterThan(10);
 		// A quarter of the way in the gain is about 0.35, roughly -9 dB.
 		expect(Math.abs(level(0.25) - (full - 9))).toBeLessThan(5);
+	});
+
+	test("a fade in at a cut dissolves from the previous clip, not from the background", () => {
+		const xml = cut([
+			{ mediaId: "red" },
+			{ mediaId: "blue", params: { [TRANSITION_PARAMS.inType]: "fade", [TRANSITION_PARAMS.inSeconds]: 1 } },
+		]);
+		near(frameOf(xml, 59)(640, 360), RED);
+		// The cut is at frame 60: blue starts invisible over the held red.
+		near(frameOf(xml, 60)(640, 360), RED);
+		near(frameOf(xml, 75)(640, 360), [128, 0, 128], 14);
+		near(frameOf(xml, 100)(640, 360), [0, 0, 255]);
+	});
+
+	test("a fade out at a cut dissolves into the next clip", () => {
+		const xml = cut([
+			{ mediaId: "red", params: { [TRANSITION_PARAMS.outType]: "fade", [TRANSITION_PARAMS.outSeconds]: 1 } },
+			{ mediaId: "blue" },
+		]);
+		near(frameOf(xml, 20)(640, 360), RED);
+		near(frameOf(xml, 45)(640, 360), [124, 0, 131], 16);
+		near(frameOf(xml, 59)(640, 360), [0, 0, 255], 14);
+		near(frameOf(xml, 60)(640, 360), [0, 0, 255]);
+	});
+
+	test("a slide at a cut moves over the previous clip's last frame", () => {
+		const xml = cut([
+			{ mediaId: "ramp", type: "video" },
+			{ mediaId: "blue", params: { [TRANSITION_PARAMS.inType]: "slide-left", [TRANSITION_PARAMS.inSeconds]: 1 } },
+		]);
+		// Part-way through the slide the right of the frame still shows the first clip, held
+		// on its last frame (59) rather than running on or going blank.
+		const expected = Math.round((59 * 255) / 219);
+		for (const frame of [61, 66]) {
+			const pixel = frameOf(xml, frame)(1220, 360);
+			near(pixel, [expected, expected, expected], 4);
+		}
+		near(frameOf(xml, 66)(60, 360), [0, 0, 255]);
+		near(frameOf(xml, 100)(1220, 360), [0, 0, 255]);
+	});
+
+	test("clips that do not touch keep revealing the background", () => {
+		const xml = cut([
+			{ mediaId: "red" },
+			{ mediaId: "blue", params: { [TRANSITION_PARAMS.inType]: "fade", [TRANSITION_PARAMS.inSeconds]: 1 } },
+		]).replace(/<playlist id="holds/, '<playlist id="unused');
+		expect(xml).toContain("freeze");
+		const apart = convertToMlt({
+			projectName: "gap-test",
+			settings: { fps: { numerator: 30, denominator: 1 }, canvasSize: CANVAS, background: { type: "color", color: "#ffffff" } },
+			scene: {
+				tracks: {
+					main: {
+						id: "main", name: "Main", type: "video", muted: false, hidden: false,
+						elements: [
+							{ id: "a", type: "image", mediaId: "red", name: "red", startTime: 0, duration: seconds(1), trimStart: 0, trimEnd: 0, hidden: false, params: { ...BASE_PARAMS } },
+							{ id: "b", type: "image", mediaId: "blue", name: "blue", startTime: seconds(2), duration: seconds(2), trimStart: 0, trimEnd: 0, hidden: false, params: { ...BASE_PARAMS, [TRANSITION_PARAMS.inType]: "fade", [TRANSITION_PARAMS.inSeconds]: 1 } },
+						],
+					},
+					overlay: [],
+					audio: [],
+				},
+			} as unknown as MltConversionInput["scene"],
+			media,
+		});
+		expect(apart.xml).not.toContain("freeze");
+		near(frameOf(apart.xml, 60)(640, 360), WHITE);
 	});
 });
