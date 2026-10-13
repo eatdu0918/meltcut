@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("desktop", {
 	cacheMedia: (request) => ipcRenderer.invoke("desktop:cache-media", request),
 	mlt: {
 		status: () => ipcRenderer.invoke("mlt:status"),
+		audioChannels: (filePath) => ipcRenderer.invoke("mlt:audio-channels", filePath),
 		chooseBinDir: () => ipcRenderer.invoke("mlt:choose-bin-dir"),
 		render: (request) => ipcRenderer.invoke("mlt:render", request),
 		previewFrame: (request) => ipcRenderer.invoke("mlt:preview-frame", request),

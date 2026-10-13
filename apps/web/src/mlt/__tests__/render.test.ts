@@ -459,6 +459,34 @@ describe.skipIf(!binDir)("converter output rendered by melt", () => {
 		const reference = level(0);
 		expect(Math.abs(level(-12) - (reference - 12))).toBeLessThan(1);
 	});
+
+	test("a mono source keeps its level instead of dropping 3 dB", () => {
+		const tone = join(work, "tone.wav");
+		execFileSync(ffmpeg, ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ac", "1", tone]);
+		const peak = (file: string) => {
+			const detect = spawnSync(ffmpeg, ["-i", file, "-af", "volumedetect", "-f", "null", "-"], { encoding: "utf8" });
+			return Number(/max_volume: (-?[\d.]+) dB/.exec(detect.stderr)?.[1]);
+		};
+		const rendered = (audioChannels: number | undefined) => {
+			media.set("tone", { path: tone, audioChannels });
+			const { xml } = convert({
+				scene: scene({
+					main: [clip({ mediaId: "tone", type: "audio" as "video", duration: 2, sourceType: "upload" })],
+				}),
+			});
+			const dir = join(work, `audio${++renderCounter}`);
+			mkdirSync(dir);
+			writeFileSync(join(dir, "project.mlt"), xml);
+			const out = join(dir, "out.wav");
+			const render = spawnSync(melt, [join(dir, "project.mlt"), "-quiet", "-consumer", `avformat:${out}`, "vn=1", "acodec=pcm_s16le"], { encoding: "utf8" });
+			expect(render.status).toBe(0);
+			return peak(out);
+		};
+		const source = peak(tone);
+		// Without the channel count melt's own mono spread applies; with it the level is kept.
+		expect(Math.abs(rendered(undefined) - (source - 3))).toBeLessThan(0.5);
+		expect(Math.abs(rendered(1) - source)).toBeLessThan(0.5);
+	});
 });
 
 // `frames` documents the tick maths used above; keep it referenced for readers.

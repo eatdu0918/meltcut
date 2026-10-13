@@ -112,6 +112,10 @@ function registerIpc() {
 
 	ipcMain.handle("mlt:status", () => mlt.getStatus());
 
+	ipcMain.handle("mlt:audio-channels", (_event, filePath) =>
+		typeof filePath === "string" && path.isAbsolute(filePath) ? mlt.audioChannels(filePath) : null,
+	);
+
 	ipcMain.handle("mlt:choose-bin-dir", async (event) => {
 		const win = BrowserWindow.fromWebContents(event.sender);
 		const answer = dialogAnswers.length

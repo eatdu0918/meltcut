@@ -23,11 +23,17 @@ import {
 // Mirrors `TICKS_PER_SECOND` in rust/crates/time. Hardcoded so the converter stays wasm-free.
 export const MLT_TICKS_PER_SECOND = 120_000;
 
+/** Key in `media` for audio that came from a URL instead of an imported file. */
+export const libraryMediaKey = (sourceUrl: string): string =>
+	`library:${sourceUrl}`;
+
 export interface MltMediaSource {
 	/** Absolute path of the file melt should read. */
 	path: string;
 	width?: number;
 	height?: number;
+	/** Channels of the file's audio, when known. Mono needs a level correction. */
+	audioChannels?: number;
 }
 
 /**
@@ -62,6 +68,11 @@ export interface MltConversionInput {
 	 * the clip is exported unmasked, with a warning.
 	 */
 	mattes?: ReadonlyMap<string, { path: string }>;
+	/**
+	 * Picture of the project background, for backgrounds MLT cannot paint itself
+	 * (gradients). Without one a non-plain colour falls back to black, with a warning.
+	 */
+	backgroundImage?: { path: string };
 }
 
 export interface MltRasterSource {
@@ -161,6 +172,7 @@ export function convertToMlt({
 	sampleNumber,
 	rasters,
 	mattes,
+	backgroundImage,
 }: MltConversionInput): MltConversionResult {
 	const warnings: string[] = [];
 	const { fps, background } = settings;
@@ -575,13 +587,19 @@ export function convertToMlt({
 		inFrame: number;
 		outFrame: number;
 	}): string | null => {
-		if (element.type === "audio" && element.sourceType === "library") {
-			warnings.push(`${element.name}: library audio is skipped`);
-			return null;
-		}
-		const source = media.get((element as { mediaId: string }).mediaId);
+		const isLibraryAudio =
+			element.type === "audio" && element.sourceType === "library";
+		const source = media.get(
+			isLibraryAudio
+				? libraryMediaKey(element.sourceUrl)
+				: (element as { mediaId: string }).mediaId,
+		);
 		if (!source) {
-			warnings.push(`${element.name}: source file is missing and was skipped`);
+			warnings.push(
+				isLibraryAudio
+					? `${element.name}: library audio could not be fetched and was skipped`
+					: `${element.name}: source file is missing and was skipped`,
+			);
 			return null;
 		}
 
@@ -624,8 +642,12 @@ export function convertToMlt({
 				for (let frame = 0; modifiersAt && frame < length && !fadesAudio; frame++) {
 					fadesAudio = modifiersAt(frame).gain !== 1;
 				}
+				// melt spreads a mono source over two channels at -3 dB each; the editor plays
+				// it at full level on both.
+				const monoGain = source.audioChannels === 1 ? 3.0103 : 0;
 				if (
 					fadesAudio ||
+					monoGain !== 0 ||
 					num(element.params.volume, 0) !== 0 ||
 					hasKeys({ element, path: "volume" })
 				) {
@@ -646,7 +668,7 @@ export function convertToMlt({
 										format: (read, frame) => {
 											const gain = modifiersAt?.(frame).gain ?? 1;
 											const fade = 20 * Math.log10(Math.max(gain, 0.001));
-											return String(round2(read("volume", 0) + fade));
+											return String(round2(read("volume", 0) + fade + monoGain));
 										},
 									}),
 								),
@@ -818,6 +840,109 @@ export function convertToMlt({
 	const playlists: { id: string; xml: string; hide: number; blend: string }[] =
 		[];
 	let producerCount = 0;
+	let playlistCount = 0;
+
+	/**
+	 * Blurred background: every picture on the main track, stretched to cover the frame and
+	 * blurred, on a track of its own under everything else. Same recipe as the editor's
+	 * BlurBackgroundNode, which also ignores the clip's transform and effects.
+	 */
+	if (background.type === "blur" && !scene.tracks.main.hidden) {
+		const intensity = num(background.blurIntensity, 10);
+		const entries: string[] = [];
+		let cursor = 0;
+		const elements = [...scene.tracks.main.elements].sort(
+			(a, b) => a.startTime - b.startTime,
+		);
+		for (const element of elements) {
+			if (element.type !== "video" && element.type !== "image") continue;
+			if (element.hidden) continue;
+			const source = media.get(element.mediaId);
+			if (!source) continue;
+			const start = toFrames(element.startTime);
+			const length = toFrames(element.startTime + element.duration) - start;
+			if (length <= 0 || start < cursor) continue;
+
+			const rate =
+				element.type === "video" && element.retime ? element.retime.rate : 1;
+			const inFrame =
+				element.type === "image" ? 0 : toFrames(element.trimStart / rate);
+			const outFrame = inFrame + length - 1;
+			const sourceWidth = source.width ?? canvasSize.width;
+			const sourceHeight = source.height ?? canvasSize.height;
+			const coverScale = Math.max(
+				canvasSize.width / sourceWidth,
+				canvasSize.height / sourceHeight,
+			);
+			const width = sourceWidth * coverScale;
+			const height = sourceHeight * coverScale;
+			const lines =
+				rate !== 1
+					? [
+							prop("mlt_service", "timewarp"),
+							prop("resource", `${round2(rate)}:${toMltPath(source.path)}`),
+							prop("warp_speed", round2(rate)),
+							prop("warp_resource", toMltPath(source.path)),
+						]
+					: [prop("resource", toMltPath(source.path))];
+			if (element.type === "image") {
+				lines.push(prop("length", outFrame + 1), prop("ttl", 1));
+			}
+			lines.push(
+				prop("audio_index", -1),
+				filter({
+					service: "qtblend",
+					props: [
+						prop(
+							"rect",
+							[
+								round2((canvasSize.width - width) / 2),
+								round2((canvasSize.height - height) / 2),
+								round2(width),
+								round2(height),
+								1,
+							].join(" "),
+						),
+						prop("compositing", 0),
+						prop("distort", 1),
+					],
+				}),
+			);
+			// Same mapping as the editor: sigma = intensity / 5 on a 1920x1080 frame.
+			const sigmaX = (intensity / 5) * (canvasSize.width / 1920);
+			const sigmaY = (intensity / 5) * (canvasSize.height / 1080);
+			if (Math.max(sigmaX, sigmaY) >= 0.01) {
+				lines.push(
+					filter({
+						service: "avfilter.gblur",
+						props: [
+							prop("av.sigma", round2(sigmaX)),
+							prop("av.sigmaV", round2(sigmaY)),
+							prop("av.steps", 3),
+						],
+					}),
+				);
+			}
+
+			const id = `backdrop${producers.length}`;
+			producers.push(
+				`<producer id="${id}">\n    ${lines.join("\n    ")}\n  </producer>`,
+			);
+			if (start > cursor) entries.push(`<blank length="${start - cursor}"/>`);
+			entries.push(
+				`<entry producer="${id}" in="${inFrame}" out="${outFrame}"/>`,
+			);
+			cursor = start + length;
+		}
+		if (entries.length > 0) {
+			playlists.push({
+				id: "backdrop_track",
+				xml: `<playlist id="backdrop_track">\n    ${entries.join("\n    ")}\n  </playlist>`,
+				hide: 2,
+				blend: "normal",
+			});
+		}
+	}
 
 	for (const track of sourceTracks) {
 		/**
@@ -898,7 +1023,7 @@ export function convertToMlt({
 
 			const hidden = "hidden" in track && track.hidden;
 			const muted = "muted" in track && track.muted;
-			const id = `playlist${playlists.length}`;
+			const id = `playlist${playlistCount++}`;
 			playlists.push({
 				id,
 				xml: `<playlist id="${id}">\n    ${entries.join("\n    ")}\n  </playlist>`,
@@ -909,12 +1034,23 @@ export function convertToMlt({
 		}
 	}
 
+	// Under a blurred background the gaps between main-track clips stay black, as in the editor.
 	let backgroundColour = "#000000ff";
-	if (background.type === "color") {
-		backgroundColour = toMltColour(background.color);
-	} else {
-		warnings.push("Blurred background is not converted yet; using black");
+	if (background.type === "color" && background.color !== "transparent") {
+		if (/^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i.test(background.color)) {
+			backgroundColour = toMltColour(background.color);
+		} else if (!backgroundImage) {
+			warnings.push("The background is not a plain colour and was not drawn; using black");
+		}
 	}
+	const backgroundProducer =
+		background.type === "color" && backgroundImage
+			? `${prop("resource", toMltPath(backgroundImage.path))}
+    ${prop("length", totalFrames)}
+    ${prop("ttl", 1)}`
+			: `${prop("mlt_service", "color")}
+    ${prop("resource", backgroundColour)}
+    ${prop("length", totalFrames)}`;
 
 	const transitions = playlists.flatMap((playlist, index) => {
 		const bTrack = index + 1; // track 0 is the background
@@ -934,9 +1070,7 @@ export function convertToMlt({
 <mlt LC_NUMERIC="C" version="7.0.0" producer="main_tractor">
   <profile description="${esc(projectName)}" width="${canvasSize.width}" height="${canvasSize.height}" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="${canvasSize.width}" display_aspect_den="${canvasSize.height}" frame_rate_num="${fps.numerator}" frame_rate_den="${fps.denominator}" colorspace="709"/>
   <producer id="background" in="0" out="${lastFrame}">
-    ${prop("mlt_service", "color")}
-    ${prop("resource", backgroundColour)}
-    ${prop("length", totalFrames)}
+    ${backgroundProducer}
   </producer>
   <playlist id="background_track">
     <entry producer="background" in="0" out="${lastFrame}"/>

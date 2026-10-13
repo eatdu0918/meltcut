@@ -198,6 +198,63 @@ export async function rasterizeElement({
 	});
 }
 
+/** True for a plain "#rrggbb" / "#rrggbbaa" colour, which MLT can paint itself. */
+export function isPlainColour(color: string): boolean {
+	return /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color);
+}
+
+/**
+ * Draws a project background the editor paints but MLT cannot describe, such as a gradient.
+ */
+export async function rasterizeBackground({
+	color,
+	canvasSize,
+	outputSize,
+	fps,
+}: {
+	color: string;
+	canvasSize: { width: number; height: number };
+	outputSize: { width: number; height: number };
+	fps: FrameRate;
+}): Promise<Blob> {
+	const tracks = {
+		main: {
+			id: "background-main",
+			name: "Main",
+			type: "video",
+			elements: [],
+			muted: false,
+			hidden: false,
+		},
+		overlay: [],
+		audio: [],
+	} as unknown as SceneTracks;
+	const scene = buildScene({
+		tracks,
+		mediaAssets: [],
+		duration: 1,
+		canvasSize,
+		background: { type: "color", color },
+	});
+	const canvas = document.createElement("canvas");
+	canvas.width = outputSize.width;
+	canvas.height = outputSize.height;
+	await new CanvasRenderer({
+		width: canvasSize.width,
+		height: canvasSize.height,
+		fps,
+	}).renderToCanvas({ node: scene, time: 0, targetCanvas: canvas });
+	return new Promise<Blob>((resolve, reject) =>
+		canvas.toBlob(
+			(blob) =>
+				blob
+					? resolve(blob)
+					: reject(new Error("Could not encode the background")),
+			"image/png",
+		),
+	);
+}
+
 /** Stable short key for caching a rasterised element. */
 export function rasterKey({
 	element,

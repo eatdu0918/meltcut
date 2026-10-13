@@ -12,6 +12,7 @@ import { buildScene } from "@/services/renderer/scene-builder";
 import {
 	buildElementFromMedia,
 	buildGraphicElement,
+	buildLibraryAudioElement,
 	buildStickerElement,
 	buildTextElement,
 } from "@/timeline/element-utils";
@@ -36,6 +37,7 @@ export function installE2EHooks(): void {
 		buildTextElement,
 		buildGraphicElement,
 		buildStickerElement,
+		buildLibraryAudioElement,
 		resolveStickerIntrinsicSize,
 		buildDefaultMaskInstance,
 		mediaTimeFromSeconds,

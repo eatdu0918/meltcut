@@ -6,13 +6,16 @@ import { storageService } from "@/services/storage/service";
 import type { TimelineTrack } from "@/timeline/types";
 import {
 	convertToMlt,
+	libraryMediaKey,
 	type MltMediaSource,
 	type MltRasterSource,
 } from "./convert";
 import {
 	needsLiveTransform,
+	isPlainColour,
 	isRasterizable,
 	matteKey,
+	rasterizeBackground,
 	rasterizeElement,
 	rasterizeMaskMatte,
 	rasterKey,
@@ -63,6 +66,25 @@ async function readMediaBytes({
 // Media copied into the shell cache this session: asset id -> cached path.
 const cachedMediaPaths = new Map<string, string>();
 
+// Channel counts read this session: path -> channels (null when the file has no audio).
+const audioChannelCounts = new Map<string, number | null>();
+
+async function audioChannelsOf({
+	bridge,
+	path,
+}: {
+	bridge: DesktopBridge;
+	path: string;
+}): Promise<number | undefined> {
+	if (!audioChannelCounts.has(path)) {
+		audioChannelCounts.set(
+			path,
+			await bridge.mlt.audioChannels(path).catch(() => null),
+		);
+	}
+	return audioChannelCounts.get(path) ?? undefined;
+}
+
 /**
  * Every media file the timeline uses, as a path melt can read. Media without a usable
  * original (pasted, moved, or imported in a browser) is copied into the shell's cache once.
@@ -97,9 +119,66 @@ async function resolveMediaSources({
 			});
 			cachedMediaPaths.set(asset.id, path);
 		}
-		sources.set(asset.id, { path, width: asset.width, height: asset.height });
+		sources.set(asset.id, {
+			path,
+			width: asset.width,
+			height: asset.height,
+			audioChannels:
+				asset.type === "image"
+					? undefined
+					: await audioChannelsOf({ bridge, path }),
+		});
 	}
 	return sources;
+}
+
+/**
+ * Audio that was added from a URL (the sound library) has no imported file, so it is
+ * fetched once and kept in the shell's cache. A sound that cannot be fetched is left out
+ * and the converter reports it.
+ */
+async function resolveLibraryAudio({
+	bridge,
+	tracks,
+	sources,
+}: {
+	bridge: DesktopBridge;
+	tracks: TimelineTrack[];
+	sources: Map<string, MltMediaSource>;
+}): Promise<void> {
+	for (const track of tracks) {
+		for (const element of track.elements) {
+			if (element.type !== "audio" || element.sourceType !== "library") continue;
+			const key = libraryMediaKey(element.sourceUrl);
+			if (sources.has(key)) continue;
+			let path = cachedMediaPaths.get(key);
+			if (!path || !(await bridge.fileExists(path))) {
+				try {
+					const response = await fetch(element.sourceUrl);
+					if (!response.ok) throw new Error(`HTTP ${response.status}`);
+					let hash = 2166136261;
+					for (let i = 0; i < key.length; i++) {
+						hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+					}
+					path = await bridge.cacheMedia({
+						id: `library-${(hash >>> 0).toString(16).padStart(8, "0")}-${key.length}`,
+						extension: extensionOf({
+							name: element.sourceUrl.split(/[?#]/)[0],
+							fallback: ".mp3",
+						}),
+						data: await response.arrayBuffer(),
+					});
+					cachedMediaPaths.set(key, path);
+				} catch {
+					continue;
+				}
+			}
+			sources.set(key, {
+				path,
+				audioChannels: await audioChannelsOf({ bridge, path }),
+			});
+		}
+	}
 }
 
 // Rasterised elements written to the shell cache this session: raster key -> path.
@@ -221,6 +300,57 @@ async function resolveMattes({
 	return mattes;
 }
 
+/** Draws a gradient background as a picture; plain colours need none. */
+async function resolveBackgroundImage({
+	bridge,
+	editor,
+	outputSize,
+	warnings,
+}: {
+	bridge: DesktopBridge;
+	editor: EditorCore;
+	outputSize: { width: number; height: number };
+	warnings: string[];
+}): Promise<{ path: string } | undefined> {
+	const { canvasSize, fps, background } = editor.project.getActive().settings;
+	if (
+		background.type !== "color" ||
+		background.color === "transparent" ||
+		isPlainColour(background.color)
+	) {
+		return undefined;
+	}
+	const key = `background-${matteKey({
+		element: { masks: [background.color] } as unknown as MaskableElement,
+		sourceWidth: canvasSize.width,
+		sourceHeight: canvasSize.height,
+		outputSize,
+	})}`;
+	let path = rasterPaths.get(key);
+	if (!path || !(await bridge.fileExists(path))) {
+		try {
+			const image = await rasterizeBackground({
+				color: background.color,
+				canvasSize,
+				outputSize,
+				fps,
+			});
+			path = await bridge.cacheMedia({
+				id: key,
+				extension: ".png",
+				data: await image.arrayBuffer(),
+			});
+			rasterPaths.set(key, path);
+		} catch (error) {
+			warnings.push(
+				`Background could not be drawn (${error instanceof Error ? error.message : String(error)})`,
+			);
+			return undefined;
+		}
+	}
+	return { path };
+}
+
 export interface BuiltMltProject {
 	xml: string;
 	warnings: string[];
@@ -245,6 +375,7 @@ export async function buildMltProject({
 		mediaIds: usedMediaIds({ tracks }),
 		projectId: project.metadata.id,
 	});
+	await resolveLibraryAudio({ bridge, tracks, sources: media });
 	const rasterWarnings: string[] = [];
 	const rasters = await resolveRasters({
 		bridge,
@@ -260,6 +391,12 @@ export async function buildMltProject({
 		outputSize: outputSize ?? project.settings.canvasSize,
 		warnings: rasterWarnings,
 	});
+	const backgroundImage = await resolveBackgroundImage({
+		bridge,
+		editor,
+		outputSize: outputSize ?? project.settings.canvasSize,
+		warnings: rasterWarnings,
+	});
 	const result = convertToMlt({
 		projectName: project.metadata.name,
 		settings: project.settings,
@@ -268,6 +405,7 @@ export async function buildMltProject({
 		outputSize,
 		rasters,
 		mattes,
+		backgroundImage,
 		// Keyframes are evaluated by the editor's own resolver, so easing matches the preview.
 		sampleNumber: ({ element, path, localTicks, fallback }) =>
 			resolveAnimationPathValueAtTime({

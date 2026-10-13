@@ -81,6 +81,25 @@ async function getStatus() {
 }
 
 // Consumer properties come from the renderer, so only plain `key=value` pairs get through.
+/**
+ * Number of channels in a file's first audio stream, or null when it has none or cannot be
+ * read. melt plays mono sources 3 dB quieter than the editor does, and the converter needs
+ * this to correct it.
+ */
+async function audioChannels(filePath) {
+	const binDir = findMltBinDir();
+	if (!binDir) return null;
+	try {
+		const { stdout } = await run(path.join(binDir, `ffprobe${EXE}`), [
+			"-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels", "-of", "csv=p=0", filePath,
+		]);
+		const channels = Number.parseInt(String(stdout).trim(), 10);
+		return Number.isFinite(channels) && channels > 0 ? channels : null;
+	} catch {
+		return null;
+	}
+}
+
 const SAFE_KEY = /^[A-Za-z0-9_.-]+$/;
 const SAFE_VALUE = /^[A-Za-z0-9_.:+,=\/ #%-]*$/;
 
@@ -280,4 +299,4 @@ function cancelAll() {
 
 const nextJobId = () => `job-${++jobCounter}`;
 
-module.exports = { getStatus, findMltBinDir, setMltBinDir, render, renderFrame, renderPreviewClip, cancel, cancelAll, nextJobId, run, EXE };
+module.exports = { getStatus, audioChannels, findMltBinDir, setMltBinDir, render, renderFrame, renderPreviewClip, cancel, cancelAll, nextJobId, run, EXE };

@@ -74,4 +74,37 @@ describe("convertToMlt", () => {
 		const { xml } = convert({ scene: edited });
 		expect(xml).toContain(String.raw`a &lt;b&gt; &amp; &quot;c&quot; \#1`);
 	});
+
+	test("blurred background adds a cover-scaled, blurred copy of the main track underneath", () => {
+		const { xml, warnings } = convert({
+			settings: { ...settings, background: { type: "blur", blurIntensity: 100 } },
+		});
+		expect(warnings).toEqual([]);
+		const order = [...xml.matchAll(/<track producer="(\w+)"/g)].map((m) => m[1]);
+		expect(order.slice(0, 3)).toEqual(["background_track", "backdrop_track", "playlist0"]);
+		// The backdrop is silent and must not double the clip's audio.
+		expect(xml).toContain('<track producer="backdrop_track" hide="audio"/>');
+		const backdrop = /<producer id="backdrop\d+">[\s\S]*?<\/producer>/.exec(xml)?.[0] ?? "";
+		expect(backdrop).toContain("C:/media/clipA.mp4");
+		expect(backdrop).toContain('<property name="rect">0 0 1280 720 1</property>');
+		// sigma = 100 / 5 at 1920x1080, scaled to 1280x720
+		expect(backdrop).toContain('<property name="av.sigma">13.33</property>');
+	});
+
+	test("a gradient background uses the picture drawn by the editor, or warns without one", () => {
+		const gradient = {
+			...settings,
+			background: { type: "color", color: "linear-gradient(90deg, #f00, #00f)" },
+		} as typeof settings;
+		const without = convert({ settings: gradient });
+		expect(without.warnings).toEqual([
+			"The background is not a plain colour and was not drawn; using black",
+		]);
+		const withImage = convert({
+			settings: gradient,
+			backgroundImage: { path: String.raw`C:\cache\bg.png` },
+		});
+		expect(withImage.warnings).toEqual([]);
+		expect(withImage.xml).toMatch(/<producer id="background"[^>]*>\s*<property name="resource">C:\/cache\/bg.png/);
+	});
 });

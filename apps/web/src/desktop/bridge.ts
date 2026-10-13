@@ -45,6 +45,8 @@ export interface DesktopBridge {
 	}) => Promise<string>;
 	mlt: {
 		status: () => Promise<MltStatus>;
+		/** Channels of a file's first audio stream; null when it has none. */
+		audioChannels: (filePath: string) => Promise<number | null>;
 		chooseBinDir: () => Promise<MltStatus>;
 		render: (request: {
 			jobId: string;
