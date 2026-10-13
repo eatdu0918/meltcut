@@ -1,0 +1,104 @@
+name: Build
+
+# Tests the converter against the real engine and builds the Windows installer.
+# Pushing a tag like v0.2.0 also publishes the installer as a GitHub release.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The engine the installer ships. Keep in step with THIRD-PARTY-NOTICES.md.
+  SHOTCUT_VERSION: "26.9.27"
+  SHOTCUT_SHA256: "1f8c50ce7b125a2f0dcb60777b358e86baf03b8515982612b6adae10a83d93a5"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2.18"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install the Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Cache the engine
+        id: engine-cache
+        uses: actions/cache@v4
+        with:
+          path: engine
+          key: shotcut-win64-${{ env.SHOTCUT_VERSION }}
+
+      - name: Download the engine
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $zip = "shotcut-win64-$env:SHOTCUT_VERSION.zip"
+          Invoke-WebRequest "https://github.com/mltframework/shotcut/releases/download/v$env:SHOTCUT_VERSION/$zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:SHOTCUT_SHA256) { throw "Engine checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath engine
+          Remove-Item $zip
+
+      - name: Point the tests at the engine
+        shell: pwsh
+        run: |
+          $bin = Join-Path $env:GITHUB_WORKSPACE "engine\Shotcut"
+          if (-not (Test-Path (Join-Path $bin "melt.exe"))) { throw "melt.exe not found in $bin" }
+          "MLT_BIN_DIR=$bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Converter tests
+        working-directory: apps/web
+        run: bun test src/mlt
+
+      - name: Build the web app
+        working-directory: apps/web
+        run: bun x next build
+
+      - name: Build the installer
+        working-directory: apps/shell
+        shell: pwsh
+        run: node scripts/dist.cjs "--engine=$env:MLT_BIN_DIR"
+
+      - name: Checksum
+        working-directory: apps/shell/dist
+        shell: pwsh
+        run: |
+          Get-ChildItem MeltCut-Setup-*.exe | ForEach-Object {
+            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" | Tee-Object -FilePath "$($_.Name).sha256"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeltCut-Setup
+          path: |
+            apps/shell/dist/MeltCut-Setup-*.exe
+            apps/shell/dist/MeltCut-Setup-*.exe.sha256
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = Get-ChildItem apps/shell/dist/MeltCut-Setup-*.exe, apps/shell/dist/MeltCut-Setup-*.exe.sha256
+          gh release create $env:GITHUB_REF_NAME $files --title "MeltCut $($env:GITHUB_REF_NAME.TrimStart('v'))" --generate-notes --draft
